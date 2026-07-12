@@ -1,0 +1,148 @@
+{
+  "info": {
+    "_postman_id": "ms-ia-collection-v1",
+    "name": "IusCloud – ms-ia",
+    "description": "Asistente de IA: chat legal + análisis de documentos con Claude — ms-ia v1.\n\nRequiere un JWT válido (claim tenantId) en la variable {{token}} y que ANTHROPIC_API_KEY esté configurada en el servidor.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",        "value": "http://localhost:8087/ms-ia", "type": "string" },
+    { "key": "token",          "value": "",                            "type": "string" },
+    { "key": "conversationId", "value": "",                            "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "Crear conversación",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/chat/conversations", "host": ["{{baseUrl}}"], "path": ["api","v1","chat","conversations"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Consulta sobre contrato de arrendamiento\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["var r = pm.response.json(); if(r.data && r.data.id) pm.collectionVariables.set('conversationId', r.data.id);"], "type": "text/javascript" }
+          }]
+        },
+        {
+          "name": "Crear conversación (sin título)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/chat/conversations", "host": ["{{baseUrl}}"], "path": ["api","v1","chat","conversations"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["var r = pm.response.json(); if(r.data && r.data.id) pm.collectionVariables.set('conversationId', r.data.id);"], "type": "text/javascript" }
+          }]
+        },
+        {
+          "name": "Enviar mensaje",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/messages", "host": ["{{baseUrl}}"], "path": ["api","v1","chat","conversations","{{conversationId}}","messages"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"¿Qué cláusulas mínimas debe tener un contrato de arrendamiento de vivienda urbana en Colombia?\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Enviar mensaje (seguimiento)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/messages", "host": ["{{baseUrl}}"], "path": ["api","v1","chat","conversations","{{conversationId}}","messages"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"¿Y cuál es el plazo máximo de duración y cómo opera la prórroga automática?\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Listar conversaciones",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/chat/conversations", "host": ["{{baseUrl}}"], "path": ["api","v1","chat","conversations"] }
+          }
+        },
+        {
+          "name": "Obtener conversación (con mensajes)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","chat","conversations","{{conversationId}}"] }
+          }
+        },
+        {
+          "name": "Eliminar conversación",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","chat","conversations","{{conversationId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "item": [
+        {
+          "name": "Analizar documento (resumen por defecto)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/documents/analyze", "host": ["{{baseUrl}}"], "path": ["api","v1","documents","analyze"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": [], "description": "PDF o texto plano (.txt, .md, .csv) a analizar" }
+              ]
+            }
+          },
+          "description": "Selecciona un archivo PDF o de texto en el campo 'file'. Sin 'instruction', devuelve un resumen estructurado."
+        },
+        {
+          "name": "Analizar documento (instrucción personalizada)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/documents/analyze", "host": ["{{baseUrl}}"], "path": ["api","v1","documents","analyze"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": [], "description": "PDF o texto plano a analizar" },
+                { "key": "instruction", "type": "text", "value": "Extrae las partes del contrato, el objeto, el valor, la vigencia y las cláusulas de terminación. Devuélvelo como lista." }
+              ]
+            }
+          },
+          "description": "Adjunta el archivo en 'file' y ajusta 'instruction' con lo que quieras que haga la IA sobre el documento."
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "noauth" },
+            "url": { "raw": "{{baseUrl}}/actuator/health", "host": ["{{baseUrl}}"], "path": ["actuator","health"] }
+          }
+        }
+      ]
+    }
+  ]
+}

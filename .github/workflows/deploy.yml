@@ -1,0 +1,68 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run tests
+        run: mvn test -Dsurefire.excludes="**/*ApplicationTests.java"
+
+      - name: Install sshpass
+        run: sudo apt-get install -y sshpass
+
+      - name: Sync source to server
+        env:
+          SSHPASS: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          sshpass -e rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='.idea' \
+            --exclude='.mvn' \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/home/back/ms-ia/
+
+      - name: Build and restart container
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            set -e
+            docker rm -f iuscloud-ms-ia 2>/dev/null || true
+            cd /home/back
+            docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build ms_ia
+
+      - name: Health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            echo "Esperando que el contenedor sea healthy..."
+            for i in $(seq 1 18); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' iuscloud-ms-ia 2>/dev/null || echo "starting")
+              echo "[$i/18] $STATUS"
+              [ "$STATUS" = "healthy" ] && echo "Deploy exitoso" && exit 0
+              sleep 10
+            done
+            echo "El contenedor no alcanzo healthy en 3 minutos"
+            docker logs --tail=100 iuscloud-ms-ia
+            exit 1
