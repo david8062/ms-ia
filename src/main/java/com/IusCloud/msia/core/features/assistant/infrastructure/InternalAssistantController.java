@@ -28,7 +28,10 @@ public class InternalAssistantController {
         List<MediaDTO> media = result.media().stream()
                 .map(m -> new MediaDTO(m.url(), m.filename()))
                 .toList();
-        return new AssistantReplyResponse(result.reply(), media);
+        LeadNotifyDTO lead = result.leadNotify() != null
+                ? new LeadNotifyDTO(result.leadNotify().phone(), result.leadNotify().text())
+                : null;
+        return new AssistantReplyResponse(result.reply(), media, lead);
     }
 
     public record AssistantWhatsappRequest(String phone, String text) {}
@@ -36,5 +39,8 @@ public class InternalAssistantController {
     /** Un archivo a enviar (URL de descarga + nombre); ms-messaging lo entrega por WhatsApp. */
     public record MediaDTO(String url, String filename) {}
 
-    public record AssistantReplyResponse(String reply, List<MediaDTO> media) {}
+    /** Aviso al dueño de un lead (número sin cuenta); ms-messaging lo envía aparte. */
+    public record LeadNotifyDTO(String phone, String text) {}
+
+    public record AssistantReplyResponse(String reply, List<MediaDTO> media, LeadNotifyDTO leadNotify) {}
 }

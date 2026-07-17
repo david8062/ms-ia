@@ -50,15 +50,21 @@ public class WhatsAppAssistantUseCase {
     private final AuthIdentityClient authIdentityClient;
     private final LegalCoreAssistantClient legalCoreClient;
     private final DocumentSelectionCache docCache;
+    private final RecentContactCache recentContactCache;
+
+    /** Teléfono del dueño para avisarle de leads (números sin cuenta). Vacío = no avisar. */
+    @org.springframework.beans.factory.annotation.Value("${assistant.leads.notify-phone:}")
+    private String leadsNotifyPhone;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final ZoneId ZONE = ZoneId.of("America/Bogota");
     private static final DateTimeFormatter DISPLAY = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
+    // Sin links: un enlace a un no-contacto es señal de spam para WhatsApp.
     private static final String NOT_RECOGNIZED =
-            "👋 Hola, soy el asistente de *IusCloud*. No encuentro una cuenta asociada a este número.\n\n"
-            + "Regístrate en https://ius-cloud.com para vigilar tus procesos y llevar tu agenda al día.";
+            "👋 Hola, soy el asistente de *IusCloud* (gestión y seguimiento de procesos para abogados).\n\n"
+            + "No encuentro una cuenta asociada a este número. ¿Quieres que un asesor te contacte para conocerlo?";
 
     private static final String CAPABILITIES =
             "👋 Soy tu asistente de *IusCloud*. Puedo ayudarte con:\n\n"
@@ -110,7 +116,18 @@ public class WhatsAppAssistantUseCase {
 
         Optional<ResolvedIdentity> identity = authIdentityClient.resolveByPhone(phone);
         if (identity.isEmpty()) {
-            return AssistantResult.text(NOT_RECOGNIZED); // sin identidad confirmada, no se muestra ningún dato
+            // Sin identidad confirmada: no se muestra ningún dato. Se saluda UNA vez (anti-spam);
+            // si ya se saludó dentro de la ventana, silencio (no spamear a un no-contacto).
+            if (recentContactCache.greetedRecently(phone)) {
+                return AssistantResult.silent();
+            }
+            recentContactCache.markGreeted(phone);
+            LeadNotify lead = (leadsNotifyPhone != null && !leadsNotifyPhone.isBlank())
+                    ? new LeadNotify(leadsNotifyPhone,
+                        "📥 *IusCloud* — un número sin cuenta escribió al asistente.\n"
+                        + "Posible interesado: +" + phone + "\nEscríbele tú para contarle.")
+                    : null;
+            return new AssistantResult(NOT_RECOGNIZED, List.of(), lead);
         }
         ResolvedIdentity id = identity.get();
 
@@ -273,7 +290,7 @@ public class WhatsAppAssistantUseCase {
             String reply = chosen.size() == 1
                     ? "📎 Aquí está tu documento:"
                     : "📎 Aquí están tus " + chosen.size() + " documentos:";
-            return new AssistantResult(reply, media);
+            return new AssistantResult(reply, media, null);
         }
 
         // Caso 2: pide los documentos de un proceso → listar y cachear para el siguiente mensaje.
@@ -351,10 +368,18 @@ public class WhatsAppAssistantUseCase {
     /** Un archivo a enviar por WhatsApp (URL de descarga + nombre). */
     public record MediaItem(String url, String filename) {}
 
-    /** Respuesta del asistente: texto + archivos opcionales. */
-    public record AssistantResult(String reply, List<MediaItem> media) {
+    /** Aviso al dueño de un lead (número que escribió sin tener cuenta). */
+    public record LeadNotify(String phone, String text) {}
+
+    /** Respuesta del asistente: texto + archivos + aviso de lead, todos opcionales. */
+    public record AssistantResult(String reply, List<MediaItem> media, LeadNotify leadNotify) {
         static AssistantResult text(String reply) {
-            return new AssistantResult(reply, List.of());
+            return new AssistantResult(reply, List.of(), null);
+        }
+
+        /** Sin respuesta: no se envía nada (para no spamear a un no-contacto ya saludado). */
+        static AssistantResult silent() {
+            return new AssistantResult("", List.of(), null);
         }
     }
 }
