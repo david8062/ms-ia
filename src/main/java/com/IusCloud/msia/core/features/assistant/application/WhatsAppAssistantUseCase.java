@@ -8,8 +8,10 @@ import com.IusCloud.msia.core.common.usage.UsageFeature;
 import com.IusCloud.msia.core.common.usage.UsageLogService;
 import com.IusCloud.msia.core.features.assistant.infrastructure.AuthIdentityClient;
 import com.IusCloud.msia.core.features.assistant.infrastructure.AuthIdentityClient.ResolvedIdentity;
+import com.IusCloud.msia.core.features.assistant.application.DocumentSelectionCache.CachedDoc;
 import com.IusCloud.msia.core.features.assistant.infrastructure.LegalCoreAssistantClient;
 import com.IusCloud.msia.core.features.assistant.infrastructure.LegalCoreAssistantClient.CaseStatusDTO;
+import com.IusCloud.msia.core.features.assistant.infrastructure.LegalCoreAssistantClient.DocumentDTO;
 import com.IusCloud.msia.core.features.assistant.infrastructure.LegalCoreAssistantClient.HearingDTO;
 import com.IusCloud.msia.core.features.assistant.infrastructure.LegalCoreAssistantClient.TaskDTO;
 import com.IusCloud.msia.shared.tenant.TenantContext;
@@ -25,6 +27,7 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -46,6 +49,7 @@ public class WhatsAppAssistantUseCase {
     private final TokenLimitGuardService tokenGuard;
     private final AuthIdentityClient authIdentityClient;
     private final LegalCoreAssistantClient legalCoreClient;
+    private final DocumentSelectionCache docCache;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -60,7 +64,8 @@ public class WhatsAppAssistantUseCase {
             "👋 Soy tu asistente de *IusCloud*. Puedo ayudarte con:\n\n"
             + "• 📅 *Tus audiencias* — \"¿qué audiencias tengo mañana?\"\n"
             + "• ✅ *Tus tareas pendientes* — \"¿qué tengo pendiente?\"\n"
-            + "• ⚖️ *Estado de un proceso* — \"¿cómo va el 11001...?\"\n\n"
+            + "• ⚖️ *Estado de un proceso* — \"¿cómo va el 11001...?\"\n"
+            + "• 📎 *Documentos de un proceso* — \"mándame los documentos del 11001...\"\n\n"
             + "¿En qué te ayudo?";
 
     private static final String ROUTER_SYSTEM = """
@@ -68,35 +73,44 @@ public class WhatsAppAssistantUseCase {
             Clasifica el mensaje del abogado en UNA intención y extrae parámetros.
             Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional y sin ```.
 
-            Esquema: {"intent": "HEARINGS"|"TASKS"|"CASE_STATUS"|"OTHER", "range": "TODAY"|"TOMORROW"|"WEEK"|null, "radicado": string|null}
+            Esquema: {"intent": "HEARINGS"|"TASKS"|"CASE_STATUS"|"DOCUMENTS"|"OTHER", "range": "TODAY"|"TOMORROW"|"WEEK"|null, "radicado": string|null, "selection": string|null}
 
             - HEARINGS: pregunta por audiencias/diligencias. range = a qué fecha se refiere
               (hoy=TODAY, mañana=TOMORROW, esta semana o próximos días=WEEK; si no especifica, TODAY).
             - TASKS: pregunta por tareas/pendientes/actividades.
             - CASE_STATUS: pregunta por el estado o avance de un proceso. radicado = solo los dígitos
               del radicado si los menciona; si no da radicado, null.
-            - OTHER: saludo, algo fuera de alcance, o no está claro.
+            - DOCUMENTS: pide los documentos/archivos de un proceso, O elige de una lista que se le
+              acaba de mostrar. radicado = dígitos del radicado si los menciona (para LISTAR).
+              selection = qué documentos quiere de la lista previa: "all" para todos; o los números
+              separados por coma ("1" o "1,3"); null si no está eligiendo.
+            - OTHER: saludo, agradecimiento, algo fuera de alcance, o no está claro.
 
             Ejemplos:
-            "¿qué audiencias tengo mañana?" -> {"intent":"HEARINGS","range":"TOMORROW","radicado":null}
-            "audiencias de esta semana" -> {"intent":"HEARINGS","range":"WEEK","radicado":null}
-            "mis pendientes" -> {"intent":"TASKS","range":null,"radicado":null}
-            "cómo va el 11001310300120230037901" -> {"intent":"CASE_STATUS","range":null,"radicado":"11001310300120230037901"}
-            "hola" -> {"intent":"OTHER","range":null,"radicado":null}
+            "¿qué audiencias tengo mañana?" -> {"intent":"HEARINGS","range":"TOMORROW","radicado":null,"selection":null}
+            "audiencias de esta semana" -> {"intent":"HEARINGS","range":"WEEK","radicado":null,"selection":null}
+            "mis pendientes" -> {"intent":"TASKS","range":null,"radicado":null,"selection":null}
+            "cómo va el 11001310300120230037901" -> {"intent":"CASE_STATUS","range":null,"radicado":"11001310300120230037901","selection":null}
+            "mándame los documentos del proceso 11001310300120230037901" -> {"intent":"DOCUMENTS","range":null,"radicado":"11001310300120230037901","selection":null}
+            "documentos del 11001310300120230037901" -> {"intent":"DOCUMENTS","range":null,"radicado":"11001310300120230037901","selection":null}
+            "todos" -> {"intent":"DOCUMENTS","range":null,"radicado":null,"selection":"all"}
+            "el 2" -> {"intent":"DOCUMENTS","range":null,"radicado":null,"selection":"2"}
+            "mándame el 1 y el 3" -> {"intent":"DOCUMENTS","range":null,"radicado":null,"selection":"1,3"}
+            "hola" -> {"intent":"OTHER","range":null,"radicado":null,"selection":null}
             """;
 
     /**
      * Procesa un mensaje entrante y devuelve el texto a enviar por WhatsApp.
      * Nunca lanza: cualquier fallo se traduce en un mensaje seguro para el usuario.
      */
-    public String handle(String phone, String text) {
+    public AssistantResult handle(String phone, String text) {
         if (text == null || text.isBlank()) {
-            return CAPABILITIES;
+            return AssistantResult.text(CAPABILITIES);
         }
 
         Optional<ResolvedIdentity> identity = authIdentityClient.resolveByPhone(phone);
         if (identity.isEmpty()) {
-            return NOT_RECOGNIZED; // sin identidad confirmada, no se muestra ningún dato
+            return AssistantResult.text(NOT_RECOGNIZED); // sin identidad confirmada, no se muestra ningún dato
         }
         ResolvedIdentity id = identity.get();
 
@@ -110,25 +124,29 @@ public class WhatsAppAssistantUseCase {
             } catch (Exception e) {
                 log.info("Mensaje bloqueado por el guarda de abuso para tenant {}: {}",
                         id.tenantId(), e.getMessage());
-                return "No puedo procesar ese mensaje. ¿Te ayudo con tus audiencias, tareas o el estado de un proceso?";
+                return AssistantResult.text(
+                        "No puedo procesar ese mensaje. ¿Te ayudo con tus audiencias, tareas, "
+                        + "el estado o los documentos de un proceso?");
             }
             try {
                 tokenGuard.check();
             } catch (Exception e) {
-                return "Alcanzaste el límite de IA de tu plan este mes. Se reinicia el primer día del mes. "
-                        + "Puedes ampliarlo desde IusCloud.";
+                return AssistantResult.text(
+                        "Alcanzaste el límite de IA de tu plan este mes. Se reinicia el primer día del mes. "
+                        + "Puedes ampliarlo desde IusCloud.");
             }
 
             Intent intent = classify(text, id);
             return switch (intent.intent()) {
-                case "HEARINGS" -> replyHearings(id, intent.range());
-                case "TASKS" -> replyTasks(id);
-                case "CASE_STATUS" -> replyCase(id, intent.radicado());
-                default -> CAPABILITIES;
+                case "HEARINGS" -> AssistantResult.text(replyHearings(id, intent.range()));
+                case "TASKS" -> AssistantResult.text(replyTasks(id));
+                case "CASE_STATUS" -> AssistantResult.text(replyCase(id, intent.radicado()));
+                case "DOCUMENTS" -> replyDocuments(id, phone, intent.radicado(), intent.selection());
+                default -> AssistantResult.text(CAPABILITIES);
             };
         } catch (Exception e) {
             log.error("Fallo atendiendo el asistente para tenant {}: {}", id.tenantId(), e.getMessage(), e);
-            return "Tuve un problema consultando tu información. Intenta de nuevo en un momento.";
+            return AssistantResult.text("Tuve un problema consultando tu información. Intenta de nuevo en un momento.");
         } finally {
             TenantContext.clear();
             UserContext.clear();
@@ -146,10 +164,11 @@ public class WhatsAppAssistantUseCase {
             String intent = node.path("intent").asText("OTHER");
             String range = node.path("range").isNull() ? null : node.path("range").asText(null);
             String radicado = node.path("radicado").isNull() ? null : node.path("radicado").asText(null);
-            return new Intent(intent, range, radicado);
+            String selection = node.path("selection").isNull() ? null : node.path("selection").asText(null);
+            return new Intent(intent, range, radicado, selection);
         } catch (Exception e) {
             log.info("No se pudo parsear la intención (tenant {}): '{}'", id.tenantId(), result.text());
-            return new Intent("OTHER", null, null);
+            return new Intent("OTHER", null, null, null);
         }
     }
 
@@ -234,6 +253,73 @@ public class WhatsAppAssistantUseCase {
         return sb.toString();
     }
 
+    private AssistantResult replyDocuments(ResolvedIdentity id, String phone, String radicado, String selection) {
+        // Caso 1: está eligiendo de una lista que se le mostró antes ("todos" / "el 2").
+        if ((radicado == null || radicado.isBlank()) && selection != null && !selection.isBlank()) {
+            List<CachedDoc> cached = docCache.get(phone);
+            if (cached == null || cached.isEmpty()) {
+                return AssistantResult.text(
+                        "¿De qué proceso quieres los documentos? Envíame el número de radicado.");
+            }
+            List<CachedDoc> chosen = resolveSelection(cached, selection);
+            if (chosen.isEmpty()) {
+                return AssistantResult.text(
+                        "No entendí cuál documento. Responde con el número (ej: *1*) o *todos*.");
+            }
+            docCache.clear(phone);
+            List<MediaItem> media = chosen.stream()
+                    .map(d -> new MediaItem(d.url(), d.filename()))
+                    .toList();
+            String reply = chosen.size() == 1
+                    ? "📎 Aquí está tu documento:"
+                    : "📎 Aquí están tus " + chosen.size() + " documentos:";
+            return new AssistantResult(reply, media);
+        }
+
+        // Caso 2: pide los documentos de un proceso → listar y cachear para el siguiente mensaje.
+        if (radicado == null || radicado.isBlank()) {
+            return AssistantResult.text("¿De qué proceso quieres los documentos? Envíame el número de radicado.");
+        }
+        List<DocumentDTO> docs = legalCoreClient.documents(id.tenantId(), radicado);
+        if (docs.isEmpty()) {
+            return AssistantResult.text(
+                    "No encuentro documentos para ese proceso. Verifica el radicado o súbelos en IusCloud.");
+        }
+        docCache.put(phone, docs.stream().map(d -> new CachedDoc(d.name(), d.url())).toList());
+
+        StringBuilder sb = new StringBuilder("📎 El proceso tiene ")
+                .append(docs.size()).append(docs.size() == 1 ? " documento:\n" : " documentos:\n");
+        for (int i = 0; i < docs.size(); i++) {
+            sb.append("\n").append(i + 1).append(". ").append(docs.get(i).name());
+        }
+        sb.append("\n\nResponde con el número (ej: *1* o *1,3*) o *todos*, y te los mando.");
+        return AssistantResult.text(sb.toString());
+    }
+
+    /** Resuelve "all"/"todos" o índices 1-based ("1", "1,3") contra el listado cacheado. */
+    private List<CachedDoc> resolveSelection(List<CachedDoc> docs, String selection) {
+        String s = selection.trim().toLowerCase();
+        if (s.equals("all") || s.equals("todos") || s.equals("todas")) {
+            return docs;
+        }
+        List<CachedDoc> chosen = new ArrayList<>();
+        for (String part : s.split("[,\\s]+")) {
+            String digits = part.replaceAll("[^0-9]", "");
+            if (digits.isEmpty()) {
+                continue;
+            }
+            try {
+                int idx = Integer.parseInt(digits) - 1;
+                if (idx >= 0 && idx < docs.size() && !chosen.contains(docs.get(idx))) {
+                    chosen.add(docs.get(idx));
+                }
+            } catch (NumberFormatException ignored) {
+                // parte no numérica: se ignora
+            }
+        }
+        return chosen;
+    }
+
     // ── formato de fechas ──────────────────────────────────────────────────────
 
     private String formatDateTime(String iso) {
@@ -260,5 +346,15 @@ public class WhatsAppAssistantUseCase {
         }
     }
 
-    private record Intent(String intent, String range, String radicado) {}
+    private record Intent(String intent, String range, String radicado, String selection) {}
+
+    /** Un archivo a enviar por WhatsApp (URL de descarga + nombre). */
+    public record MediaItem(String url, String filename) {}
+
+    /** Respuesta del asistente: texto + archivos opcionales. */
+    public record AssistantResult(String reply, List<MediaItem> media) {
+        static AssistantResult text(String reply) {
+            return new AssistantResult(reply, List.of());
+        }
+    }
 }

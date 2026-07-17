@@ -66,6 +66,25 @@ public class LegalCoreAssistantClient {
         return res != null ? res : List.of();
     }
 
+    /** Documentos de un proceso por radicado; vacío si el caso no existe (404). */
+    public List<DocumentDTO> documents(UUID tenantId, String radicado) {
+        try {
+            List<DocumentDTO> res = client.get()
+                    .uri(uri -> uri.path("/api/v1/internal/assistant/documents")
+                            .queryParam("tenantId", tenantId)
+                            .queryParam("radicado", radicado)
+                            .build())
+                    .header("X-Internal-Key", internalApiKey)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            return res != null ? res : List.of();
+        } catch (Exception e) {
+            log.info("Documentos del proceso {} no disponibles (tenant {}): {}",
+                    radicado, tenantId, e.getMessage());
+            return List.of();
+        }
+    }
+
     /** Estado de un proceso; vacío si el radicado no está en seguimiento (404). */
     public Optional<CaseStatusDTO> caseStatus(UUID tenantId, String radicado) {
         try {
@@ -97,4 +116,6 @@ public class LegalCoreAssistantClient {
 
     public record ActuacionDTO(Integer consActuacion, String fechaActuacion,
                                String actuacion, String anotacion) {}
+
+    public record DocumentDTO(String name, String mimeType, String url) {}
 }

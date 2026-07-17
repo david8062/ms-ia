@@ -1,11 +1,14 @@
 package com.IusCloud.msia.core.features.assistant.infrastructure;
 
 import com.IusCloud.msia.core.features.assistant.application.WhatsAppAssistantUseCase;
+import com.IusCloud.msia.core.features.assistant.application.WhatsAppAssistantUseCase.AssistantResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * Entrada del asistente por WhatsApp. Server-a-server (X-Internal-Key, sin JWT): lo llama
@@ -21,11 +24,17 @@ public class InternalAssistantController {
 
     @PostMapping("/whatsapp")
     public AssistantReplyResponse whatsapp(@RequestBody AssistantWhatsappRequest request) {
-        String reply = useCase.handle(request.phone(), request.text());
-        return new AssistantReplyResponse(reply);
+        AssistantResult result = useCase.handle(request.phone(), request.text());
+        List<MediaDTO> media = result.media().stream()
+                .map(m -> new MediaDTO(m.url(), m.filename()))
+                .toList();
+        return new AssistantReplyResponse(result.reply(), media);
     }
 
     public record AssistantWhatsappRequest(String phone, String text) {}
 
-    public record AssistantReplyResponse(String reply) {}
+    /** Un archivo a enviar (URL de descarga + nombre); ms-messaging lo entrega por WhatsApp. */
+    public record MediaDTO(String url, String filename) {}
+
+    public record AssistantReplyResponse(String reply, List<MediaDTO> media) {}
 }
