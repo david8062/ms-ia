@@ -17,8 +17,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class DocumentSelectionCache {
 
-    /** Un documento listado: el nombre visible y la URL de descarga temporal. */
-    public record CachedDoc(String filename, String url) {}
+    /** Un documento listado: el nombre visible, su tipo MIME y la URL de descarga temporal. */
+    public record CachedDoc(String filename, String mimeType, String url) {}
 
     private record Entry(List<CachedDoc> docs, Instant expiresAt) {}
 

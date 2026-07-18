@@ -285,7 +285,7 @@ public class WhatsAppAssistantUseCase {
             }
             docCache.clear(phone);
             List<MediaItem> media = chosen.stream()
-                    .map(d -> new MediaItem(d.url(), d.filename()))
+                    .map(d -> new MediaItem(d.url(), d.filename(), d.mimeType()))
                     .toList();
             String reply = chosen.size() == 1
                     ? "📎 Aquí está tu documento:"
@@ -302,7 +302,7 @@ public class WhatsAppAssistantUseCase {
             return AssistantResult.text(
                     "No encuentro documentos para ese proceso. Verifica el radicado o súbelos en IusCloud.");
         }
-        docCache.put(phone, docs.stream().map(d -> new CachedDoc(d.name(), d.url())).toList());
+        docCache.put(phone, docs.stream().map(d -> new CachedDoc(d.name(), d.mimeType(), d.url())).toList());
 
         StringBuilder sb = new StringBuilder("📎 El proceso tiene ")
                 .append(docs.size()).append(docs.size() == 1 ? " documento:\n" : " documentos:\n");
@@ -365,8 +365,8 @@ public class WhatsAppAssistantUseCase {
 
     private record Intent(String intent, String range, String radicado, String selection) {}
 
-    /** Un archivo a enviar por WhatsApp (URL de descarga + nombre). */
-    public record MediaItem(String url, String filename) {}
+    /** Un archivo a enviar por WhatsApp (URL de descarga + nombre + tipo MIME). */
+    public record MediaItem(String url, String filename, String mimeType) {}
 
     /** Aviso al dueño de un lead (número que escribió sin tener cuenta). */
     public record LeadNotify(String phone, String text) {}
