@@ -15,6 +15,7 @@ import com.IusCloud.msia.core.features.chat.application.dto.ConversationResponse
 import com.IusCloud.msia.core.features.chat.application.dto.CreateConversationRequest;
 import com.IusCloud.msia.core.features.chat.application.dto.CreateDocumentConversationRequest;
 import com.IusCloud.msia.core.features.chat.application.dto.MessageResponse;
+import com.IusCloud.msia.core.features.chat.application.dto.SaveSummaryConversationRequest;
 import com.IusCloud.msia.core.features.chat.domain.model.ConversationEntity;
 import com.IusCloud.msia.core.features.chat.domain.model.MessageEntity;
 import com.IusCloud.msia.core.features.chat.domain.model.MessageRole;
@@ -64,6 +65,45 @@ public class ChatUseCase {
         conversation.setTitle(request != null ? request.title() : null);
         conversation.setCaseId(request != null ? request.caseId() : null);
         conversationRepository.save(conversation);
+        return ConversationResponse.summary(conversation);
+    }
+
+    /**
+     * Persiste un resumen de caso ya generado como conversación del expediente.
+     *
+     * <p>Deliberadamente NO llama al modelo: el texto llega hecho desde el streaming que el
+     * usuario acaba de ver, así que guardar es gratis. Se escriben dos mensajes (la petición y
+     * el resumen) para que la conversación se lea natural y, sobre todo, para que los mensajes
+     * de seguimiento hereden el contexto por el camino normal de {@code buildHistory}.
+     */
+    @Transactional
+    public ConversationResponse saveSummaryAsConversation(SaveSummaryConversationRequest request) {
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setTenantId(TenantContext.getTenantId());
+        conversation.setUserId(UserContext.getUserId());
+        conversation.setCaseId(request.caseId());
+        conversation.setTitle(
+                request.title() != null && !request.title().isBlank()
+                        ? request.title()
+                        : "Resumen del caso");
+        conversationRepository.save(conversation);
+
+        String asked = request.instruction() != null && !request.instruction().isBlank()
+                ? request.instruction()
+                : "Genera un resumen del caso.";
+
+        MessageEntity userMsg = new MessageEntity();
+        userMsg.setConversationId(conversation.getId());
+        userMsg.setRole(MessageRole.USER);
+        userMsg.setContent(asked);
+        messageRepository.save(userMsg);
+
+        MessageEntity assistantMsg = new MessageEntity();
+        assistantMsg.setConversationId(conversation.getId());
+        assistantMsg.setRole(MessageRole.ASSISTANT);
+        assistantMsg.setContent(request.summary());
+        messageRepository.save(assistantMsg);
+
         return ConversationResponse.summary(conversation);
     }
 

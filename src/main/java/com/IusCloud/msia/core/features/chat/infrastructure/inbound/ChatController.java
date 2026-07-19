@@ -5,6 +5,7 @@ import com.IusCloud.msia.core.features.chat.application.dto.ChatReplyResponse;
 import com.IusCloud.msia.core.features.chat.application.dto.ConversationResponse;
 import com.IusCloud.msia.core.features.chat.application.dto.CreateConversationRequest;
 import com.IusCloud.msia.core.features.chat.application.dto.CreateDocumentConversationRequest;
+import com.IusCloud.msia.core.features.chat.application.dto.SaveSummaryConversationRequest;
 import com.IusCloud.msia.core.features.chat.application.dto.SendMessageRequest;
 import com.IusCloud.msia.core.features.chat.application.usecase.ChatUseCase;
 import com.IusCloud.msia.shared.responses.ApiResponse;
@@ -58,6 +59,13 @@ public class ChatController {
     public ResponseEntity<ApiResponse<ChatReplyResponse>> createFromDocument(
             @Valid @RequestBody CreateDocumentConversationRequest request) {
         return ResponseUtil.created(useCase.createFromDocument(request));
+    }
+
+    /** Guarda un resumen ya generado como conversación del caso (no vuelve a llamar al modelo). */
+    @PostMapping("/from-summary")
+    public ResponseEntity<ApiResponse<ConversationResponse>> createFromSummary(
+            @Valid @RequestBody SaveSummaryConversationRequest request) {
+        return ResponseUtil.created(useCase.saveSummaryAsConversation(request));
     }
 
     @GetMapping
