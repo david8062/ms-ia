@@ -61,11 +61,6 @@ public class WhatsAppAssistantUseCase {
     private static final ZoneId ZONE = ZoneId.of("America/Bogota");
     private static final DateTimeFormatter DISPLAY = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
-    // Sin links: un enlace a un no-contacto es señal de spam para WhatsApp.
-    private static final String NOT_RECOGNIZED =
-            "👋 Hola, soy el asistente de *IusCloud* (gestión y seguimiento de procesos para abogados).\n\n"
-            + "No encuentro una cuenta asociada a este número. ¿Quieres que un asesor te contacte para conocerlo?";
-
     private static final String CAPABILITIES =
             "👋 Soy tu asistente de *IusCloud*. Puedo ayudarte con:\n\n"
             + "• 📅 *Tus audiencias* — \"¿qué audiencias tengo mañana?\"\n"
@@ -116,18 +111,22 @@ public class WhatsAppAssistantUseCase {
 
         Optional<ResolvedIdentity> identity = authIdentityClient.resolveByPhone(phone);
         if (identity.isEmpty()) {
-            // Sin identidad confirmada: no se muestra ningún dato. Se saluda UNA vez (anti-spam);
-            // si ya se saludó dentro de la ventana, silencio (no spamear a un no-contacto).
-            if (recentContactCache.greetedRecently(phone)) {
-                return AssistantResult.silent();
+            // SILENCIO TOTAL a los números sin cuenta. Responderle a un no-contacto (aunque sea una
+            // sola vez) es justo el patrón por el que WhatsApp restringió la línea: la cuenta se ve
+            // escribiéndole a gente que nunca la agendó. El asistente solo habla con usuarios ya
+            // registrados, que son quienes iniciaron la relación.
+            //
+            // El aviso de lead al DUEÑO sí se conserva (va a un número propio, no al desconocido),
+            // acotado por la caché para no repetirlo con cada mensaje del mismo número.
+            if (!recentContactCache.greetedRecently(phone)) {
+                recentContactCache.markGreeted(phone);
+                if (leadsNotifyPhone != null && !leadsNotifyPhone.isBlank()) {
+                    return new AssistantResult("", List.of(), new LeadNotify(leadsNotifyPhone,
+                            "📥 *IusCloud* — un número sin cuenta escribió al asistente.\n"
+                            + "Posible interesado: +" + phone + "\nEscríbele tú para contarle."));
+                }
             }
-            recentContactCache.markGreeted(phone);
-            LeadNotify lead = (leadsNotifyPhone != null && !leadsNotifyPhone.isBlank())
-                    ? new LeadNotify(leadsNotifyPhone,
-                        "📥 *IusCloud* — un número sin cuenta escribió al asistente.\n"
-                        + "Posible interesado: +" + phone + "\nEscríbele tú para contarle.")
-                    : null;
-            return new AssistantResult(NOT_RECOGNIZED, List.of(), lead);
+            return AssistantResult.silent();
         }
         ResolvedIdentity id = identity.get();
 
